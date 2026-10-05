@@ -1,6 +1,6 @@
 <div align="center">
 
-# REYOF // FiveM Resource Analyzer
+# REYOF : FiveM Resource Analyzer
 
 ### Static analysis tool for FiveM Lua resources
 
