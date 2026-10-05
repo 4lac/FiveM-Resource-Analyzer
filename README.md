@@ -1,4 +1,4 @@
-# REYOF // FiveM Resource Analyzer
+# REYOF : FiveM Resource Analyzer
 
 A lightweight static analyzer for FiveM Lua resources.
 
