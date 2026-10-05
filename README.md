@@ -381,4 +381,4 @@ Only analyze resources and code that you have permission to inspect.
 
 ---
 
-> **REYOF // Analyze. Understand. Refactor.**
+> **REYOF Analyze. Understand. Refactor.**
