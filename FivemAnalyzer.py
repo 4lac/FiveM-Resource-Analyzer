@@ -1,5 +1,50 @@
 #!/usr/bin/env python3
-"""REYOF // FIVEM RESOURCE ANALYZER"""
+"""
+REYOF // FIVEM RESOURCE ANALYZER
+Finds functions that are duplicated / similar across different files.
+Requires Python 3.10+
+
+------------------------------------------------------------
+USAGE
+------------------------------------------------------------
+
+Linux / Linux Mint (bash):
+    python3 fivem_analyzer.py "/path/to/resources"
+    cd "/path/to/resources" && python3 /path/to/fivem_analyzer.py
+
+WSL (Windows drives live under /mnt/c):
+    python3 /mnt/c/Users/PC/Downloads/fivem_analyzer.py "/mnt/c/Users/PC/OneDrive/Desktop/New folder (3)/medical-dna"
+
+    # optional: install as a global command
+    mkdir -p ~/bin
+    cp /mnt/c/Users/PC/Downloads/fivem_analyzer.py ~/bin/fivem-analyzer
+    chmod +x ~/bin/fivem-analyzer
+    echo 'export PATH="$HOME/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
+    fivem-analyzer .
+
+Windows PowerShell:
+    python .\\fivem_analyzer.py "C:\\Users\\PC\\OneDrive\\Desktop\\New folder (3)\\medical-dna"
+    py .\\fivem_analyzer.py .          # if `python` isn't on PATH
+
+Windows CMD:
+    python fivem_analyzer.py "C:\\Users\\PC\\OneDrive\\Desktop\\New folder (3)\\medical-dna"
+    py fivem_analyzer.py .
+
+macOS (zsh):
+    python3 fivem_analyzer.py "/path/to/resources"
+
+------------------------------------------------------------
+OPTIONS
+------------------------------------------------------------
+    path                 folder to scan, recursively (default: current folder)
+    -o, --output FILE    report path (default: <folder>/similar_functions_report.txt)
+    --threshold 0.70     similarity threshold (0-1)
+    --min-tokens 20      ignore tiny functions (fewer tokens than this)
+    --no-color           plain output (no ANSI colors)
+
+Example:
+    python3 fivem_analyzer.py . --threshold 0.8 -o report.txt
+"""
 from __future__ import annotations
 
 import argparse
@@ -34,31 +79,28 @@ LUA_KEYWORDS = {
 BLOCK_OPEN = {"function", "if", "do", "repeat"}
 BLOCK_CLOSE = {"end", "until"}
 
-NET_REGISTER = {"RegisterNetEvent", "RegisterServerEvent"}
-CALLBACK_REGISTER = {
-    "lib.callback.register", "QBCore.Functions.CreateCallback", "ESX.RegisterServerCallback",
+REGISTER_CALLS = {
+    "RegisterNetEvent", "RegisterServerEvent", "AddEventHandler", "RegisterNUICallback",
+    "RegisterCommand", "lib.callback.register", "QBCore.Functions.CreateCallback",
+    "ESX.RegisterServerCallback",
 }
-REGISTER_CALLS = NET_REGISTER | CALLBACK_REGISTER | {"AddEventHandler", "RegisterNUICallback"}
 TRIGGER_CALLS = {
     "TriggerServerEvent", "TriggerLatentServerEvent", "TriggerClientEvent",
     "TriggerLatentClientEvent", "TriggerEvent", "lib.callback", "lib.callback.await",
     "QBCore.Functions.TriggerCallback", "ESX.TriggerServerCallback",
 }
-SENSITIVE_CALL = re.compile(
-    r"AddItem|RemoveItem|AddMoney|RemoveMoney|SetMoney|AccountMoney|SetJob|"
-    r"ExecuteCommand|DropPlayer|SetPlayerRoutingBucket|GiveWeapon|MySQL|oxmysql",
-    re.I,
-)
 
 
 # ============================================================
-# TERMINAL / OUTPUT
+# COLORS / OUTPUT
 # ============================================================
 
 class C:
-    RESET, RED, GREEN, YELLOW = "\033[0m", "\033[91m", "\033[92m", "\033[93m"
-    CYAN, MAGENTA, BLUE, GRAY, WHITE = "\033[96m", "\033[95m", "\033[94m", "\033[90m", "\033[97m"
-    PINK = "\033[1;38;2;255;105;180m"  # hot pink
+    RESET = "\033[0m"
+    PINK = "\033[1;38;2;255;105;180m"
+    RED, GREEN, YELLOW = "\033[91m", "\033[92m", "\033[93m"
+    CYAN, MAGENTA, BLUE = "\033[96m", "\033[95m", "\033[94m"
+    GRAY, WHITE = "\033[90m", "\033[97m"
 
 
 USE_COLOR = True
@@ -69,18 +111,13 @@ def paint(text: str, code: str | None) -> str:
 
 
 class Out:
-    """Collects lines once, then prints them (colored) and writes them (plain)."""
+    """Collects lines once: printed with colors, saved to the report without."""
 
     def __init__(self):
         self.lines: list[tuple[str, str | None]] = []
 
     def add(self, text: str = "", code: str | None = None):
         self.lines.append((text, code))
-
-    def section(self, title: str, code: str):
-        self.add("─" * 60, C.GRAY)
-        self.add(title, code)
-        self.add()
 
     def flush(self):
         for text, code in self.lines:
@@ -91,7 +128,7 @@ class Out:
 
 
 # ============================================================
-# TOKENIZER  (handles strings, long strings, all comment forms)
+# TOKENIZER  (strings, long strings and all comment forms)
 # ============================================================
 
 NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -209,21 +246,6 @@ def chain_before(toks, k) -> tuple[str | None, int]:
     return "".join(reversed(parts)), j
 
 
-def matching_close(toks, i) -> int:
-    pairs = {"(": ")", "[": "]", "{": "}"}
-    open_, close = toks[i].val, pairs[toks[i].val]
-    depth = 0
-    for j in range(i, len(toks)):
-        if toks[j].kind == "op":
-            if toks[j].val == open_:
-                depth += 1
-            elif toks[j].val == close:
-                depth -= 1
-                if depth == 0:
-                    return j
-    return len(toks) - 1
-
-
 def enclosing_bracket(toks, k, limit=600):
     """Innermost unclosed bracket before k -> (bracket, callee, first_string_arg)."""
     depth = 0
@@ -268,73 +290,56 @@ def short(name: str) -> str:
 # ============================================================
 
 @dataclass
+class Site:
+    """A place where something is called or an event is fired."""
+    what: str
+    file: Path
+    line: int
+    call: str = ""
+
+
+@dataclass
 class Func:
     name: str
     file: Path
-    side: str
     start: int
     end: int
     tokens: list[str]
-    calls: list[str]
-    span: tuple[int, int]
+    hash: str
     is_local: bool = False
     is_named: bool = False
-    handler_of: str | None = None
-    handler_via: str | None = None
-    hash: str = ""
-    snippet: list[str] = field(default_factory=list)
-
-
-@dataclass
-class Event:
-    call: str
-    name: str
-    file: Path
-    line: int
-    side: str
-
-    @property
-    def is_register(self) -> bool:
-        return self.call in REGISTER_CALLS
-
-
-@dataclass
-class ExportRef:
-    kind: str  # provides | uses
-    resource: str
-    method: str
-    file: Path
-    line: int
+    handles: str | None = None        # e.g. "medical-dna:server:treat (RegisterNetEvent)"
+    handles_event: str | None = None
+    calls: list[str] = field(default_factory=list)
+    fires: list[Site] = field(default_factory=list)
 
 
 # ============================================================
-# EXTRACTORS
+# EXTRACTION
 # ============================================================
 
-def detect_side(rel: Path) -> str:
-    names = [p.lower() for p in rel.parts[:-1]] + [rel.stem.lower()]
-    for nm in names:
-        if nm in ("server", "sv") or nm.startswith(("server", "sv_")) or nm.endswith(("_sv", "_server")):
-            return "server"
-        if nm in ("client", "cl") or nm.startswith(("client", "cl_")) or nm.endswith(("_cl", "_client")):
-            return "client"
-        if nm.startswith("shared") or nm == "config":
-            return "shared"
-    return "?"
+def extract(toks, file) -> tuple[list[Func], list[Site], list[Site]]:
+    """Returns (functions, call sites, event trigger sites) for one file."""
+    funcs: list[Func] = []
+    call_sites: list[Site] = []
+    fire_sites: list[Site] = []
 
-
-def extract_functions(toks, src_lines, file, side) -> list[Func]:
-    funcs = []
+    for idx, t in enumerate(toks):
+        if is_op(toks, idx, "("):
+            chain, cstart = chain_before(toks, idx)
+            if chain and not is_kw(toks, cstart - 1, "function"):
+                call_sites.append(Site(chain, file, t.line))
+                if chain in TRIGGER_CALLS and idx + 1 < len(toks) and toks[idx + 1].kind == "str":
+                    fire_sites.append(Site(toks[idx + 1].val, file, t.line, chain))
 
     for k, t in enumerate(toks):
         if not (t.kind == "kw" and t.val == "function"):
             continue
 
         is_local = is_kw(toks, k - 1, "local")
-        named, name, handler_of, via = False, None, None, None
+        named, name, handles, handles_event = False, None, None, None
 
         if k + 1 < len(toks) and toks[k + 1].kind == "name":
-            # function a.b:c(...)
             parts, p = [toks[k + 1].val], k + 2
             while p + 1 < len(toks) and toks[p].kind == "op" and toks[p].val in (".", ":") \
                     and toks[p + 1].kind == "name":
@@ -342,318 +347,193 @@ def extract_functions(toks, src_lines, file, side) -> list[Func]:
                 p += 2
             name, named = "".join(parts), True
         else:
-            # anonymous: name it from its context
             p = k + 1
             bracket, callee, arg = enclosing_bracket(toks, k)
-
             if is_op(toks, k - 1, "="):
                 chain, cstart = chain_before(toks, k - 1)
                 if chain and bracket == "{":
-                    name = "{" + chain + "}"  # table field, e.g. onSelect
+                    name = "{" + chain + "}"
                 elif chain:
                     name, named = chain, True
                     is_local = is_kw(toks, cstart - 1, "local")
             elif bracket == "(" and callee:
                 name = f"{callee}('{arg}')" if arg else f"{callee}(…)"
                 if arg and callee in REGISTER_CALLS:
-                    handler_of, via = arg, callee
-
-            name = name or f"<anonymous:{t.line}>"
+                    handles, handles_event = f"{arg}  ({callee})", arg
+            name = name or "<anonymous>"
 
         end = block_end(toks, k)
         body = toks[p:end + 1]
         tokens = [f'"{x.val}"' if x.kind == "str" else x.val for x in body]
-
-        calls = []
-        for idx in range(p + 1, end + 1):
-            if is_op(toks, idx, "("):
-                chain, cstart = chain_before(toks, idx)
-                if chain and not is_kw(toks, cstart - 1, "function"):
-                    calls.append(chain)
-
         start_line, end_line = t.line, toks[end].line
-        funcs.append(Func(
-            name=name, file=file, side=side, start=start_line, end=end_line,
-            tokens=tokens, calls=calls, span=(k, end), is_local=is_local, is_named=named,
-            handler_of=handler_of, handler_via=via,
+
+        func = Func(
+            name=name, file=file, start=start_line, end=end_line, tokens=tokens,
             hash=hashlib.sha256(" ".join(tokens).encode()).hexdigest(),
-            snippet=src_lines[start_line - 1:end_line],
-        ))
+            is_local=is_local, is_named=named, handles=handles, handles_event=handles_event,
+        )
+        func.calls = [s.what for s in call_sites
+                      if start_line <= s.line <= end_line and s.what != name]
+        func.fires = [s for s in fire_sites if start_line <= s.line <= end_line]
+        funcs.append(func)
 
-    return funcs
+    return funcs, call_sites, fire_sites
 
-
-def extract_events(toks, file, side) -> list[Event]:
-    events = []
-    for i, t in enumerate(toks):
-        if not is_op(toks, i, "("):
-            continue
-        chain, _ = chain_before(toks, i)
-        if chain not in REGISTER_CALLS and chain not in TRIGGER_CALLS:
-            continue
-        nxt = toks[i + 1] if i + 1 < len(toks) else None
-        name = nxt.val if nxt is not None and nxt.kind == "str" else "<dynamic>"
-        events.append(Event(chain, name, file, t.line, side))
-    return events
-
-
-def extract_exports(toks, file) -> list[ExportRef]:
-    refs = []
-    for i, t in enumerate(toks):
-        if t.kind != "name" or t.val != "exports" or is_op(toks, i - 1, ".") or is_op(toks, i - 1, ":"):
-            continue
-
-        if is_op(toks, i + 1, "(") and i + 2 < len(toks) and toks[i + 2].kind == "str":
-            refs.append(ExportRef("provides", "", toks[i + 2].val, file, t.line))
-            continue
-
-        if is_op(toks, i + 1, ".") and i + 2 < len(toks) and toks[i + 2].kind == "name":
-            res, j = toks[i + 2].val, i + 3
-        elif is_op(toks, i + 1, "["):
-            close = matching_close(toks, i + 1)
-            static = close == i + 3 and toks[i + 2].kind == "str"
-            res, j = (toks[i + 2].val if static else "<dynamic>"), close + 1
-        else:
-            continue
-
-        method = toks[j + 1].val if is_op(toks, j, ":") and j + 1 < len(toks) \
-            and toks[j + 1].kind == "name" else "?"
-        refs.append(ExportRef("uses", res, method, file, t.line))
-    return refs
-
-
-# ============================================================
-# ANALYSIS
-# ============================================================
 
 def find_lua_files(root: Path) -> list[Path]:
+    """Walks the folder and every sub-folder inside it."""
     return sorted(
-        p for p in root.rglob("*.lua")
-        if p.is_file() and not any(part in IGNORE_DIRS for part in p.relative_to(root).parts)
+        p for p in root.rglob("*")
+        if p.is_file() and p.suffix.lower() == ".lua"
+        and not any(part in IGNORE_DIRS for part in p.relative_to(root).parts)
     )
 
 
-def nested(a: Func, b: Func) -> bool:
-    if a.file != b.file:
-        return False
-    return (a.span[0] <= b.span[0] and b.span[1] <= a.span[1]) or \
-           (b.span[0] <= a.span[0] and a.span[1] <= b.span[1])
+# ============================================================
+# SIMILARITY  (groups copies that live in different files)
+# ============================================================
+
+def ratio(a: Func, b: Func) -> float:
+    if a.hash == b.hash:
+        return 1.0
+    return SequenceMatcher(None, a.tokens, b.tokens, autojunk=False).ratio()
 
 
-def find_exact_duplicates(funcs, min_tokens):
-    groups = defaultdict(list)
-    for f in funcs:
-        if len(f.tokens) >= min_tokens:
-            groups[f.hash].append(f)
-    return [g for g in groups.values() if len(g) > 1]
-
-
-def find_same_names(funcs):
-    groups = defaultdict(list)
-    for f in funcs:
-        if f.is_named and not f.is_local:  # Lua is case-sensitive; locals are file-scoped
-            groups[f.name].append(f)
-    return [g for g in groups.values() if len(g) > 1 and len({f.hash for f in g}) > 1]
-
-
-def find_similar(funcs, threshold, min_tokens):
+def find_groups(funcs: list[Func], threshold: float, min_tokens: int) -> list[list[Func]]:
     pool = [f for f in funcs if len(f.tokens) >= min_tokens]
-    results = []
-    for i in range(len(pool)):
-        for j in range(i + 1, len(pool)):
-            a, b = pool[i], pool[j]
-            if a.hash == b.hash or nested(a, b):
-                continue
-            la, lb = len(a.tokens), len(b.tokens)
-            if 2 * min(la, lb) / (la + lb) < threshold:  # upper bound of ratio()
+    parent = list(range(len(pool)))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        parent[find(a)] = find(b)
+
+    # 1) identical bodies
+    by_hash = defaultdict(list)
+    for i, f in enumerate(pool):
+        by_hash[f.hash].append(i)
+    for idxs in by_hash.values():
+        for i in idxs[1:]:
+            union(idxs[0], i)
+
+    # 2) similar bodies (sorted by size so we stop early when lengths drift too far)
+    order = sorted(range(len(pool)), key=lambda i: len(pool[i].tokens))
+    max_growth = (2 - threshold) / threshold
+    for pos, i in enumerate(order):
+        a = pool[i]
+        for j in order[pos + 1:]:
+            b = pool[j]
+            if len(b.tokens) > len(a.tokens) * max_growth:
+                break
+            if a.file == b.file or find(i) == find(j):
                 continue
             sm = SequenceMatcher(None, a.tokens, b.tokens, autojunk=False)
-            if sm.real_quick_ratio() < threshold or sm.quick_ratio() < threshold:
-                continue
-            score = sm.ratio()
-            if score >= threshold:
-                results.append((a, b, score))
-    return sorted(results, key=lambda r: -r[2])
+            if sm.real_quick_ratio() >= threshold and sm.quick_ratio() >= threshold \
+                    and sm.ratio() >= threshold:
+                union(i, j)
 
+    clusters = defaultdict(list)
+    for i, f in enumerate(pool):
+        clusters[find(i)].append(f)
 
-def build_resolver(funcs):
-    by_name = defaultdict(list)
-    by_method = defaultdict(list)
-    for f in funcs:
-        if f.is_named:
-            by_name[f.name].append(f)
-            if ":" in f.name:
-                by_method[short(f.name)].append(f)
+    def ordered(g):
+        count = defaultdict(int)
+        for f in g:
+            count[f.hash] += 1
+        return sorted(g, key=lambda f: (-count[f.hash], str(f.file), f.start))
 
-    def resolve(call: str, caller: Func) -> list[Func]:
-        cands = by_name.get(call) or (by_method.get(short(call), []) if ":" in call else [])
-        return [c for c in cands if c is not caller and (not c.is_local or c.file == caller.file)]
-
-    return resolve
+    groups = [
+        ordered(g)
+        for g in clusters.values()
+        if len({f.file for f in g}) > 1  # must appear in more than one file
+    ]
+    return sorted(groups, key=lambda g: (-len(g), str(g[0].file), g[0].start))
 
 
 # ============================================================
-# REPORT SECTIONS
+# LINKS  (what each similar function is connected to)
 # ============================================================
 
-def loc(f) -> str:
-    return f"{f.file}:{f.start}-{f.end}"
-
-
-def report_duplicates(out, exact, same_names, similar):
-    out.section("🧬 DUPLICATES", C.RED)
-
-    if not (exact or same_names or similar):
-        out.add("No duplicates detected.", C.GRAY)
-        out.add()
-        return
-
-    if exact:
-        out.add(f"🔴 EXACT DUPLICATES (same body, any name/formatting): {len(exact)}", C.RED)
-        for group in exact:
-            out.add(f"  {' / '.join(sorted({f.name for f in group}))}", C.RED)
-            for f in group:
-                out.add(f"  ├─ {loc(f)}")
-            for line in group[0].snippet[:12]:
-                out.add(f"  │    {line.rstrip()}", C.GRAY)
-            out.add()
-
-    if same_names:
-        out.add(f"🟠 SAME GLOBAL NAME / DIFFERENT CODE (last one loaded wins): {len(same_names)}", C.YELLOW)
-        for group in same_names:
-            out.add(f"  {group[0].name}()", C.YELLOW)
-            for f in group:
-                out.add(f"  ├─ {loc(f)}")
-        out.add()
-
-    if similar:
-        out.add(f"🟡 SIMILAR FUNCTIONS: {len(similar)}", C.MAGENTA)
-        for a, b, score in similar:
-            out.add(f"  {a.name}  <->  {b.name}   {score * 100:.1f}%", C.MAGENTA)
-            out.add(f"  ├─ {loc(a)}")
-            out.add(f"  └─ {loc(b)}")
-        out.add()
-
-
-def report_relationships(out, relationships):
-    out.section("🔗 FUNCTION RELATIONSHIPS", C.BLUE)
-    if not relationships:
-        out.add("No internal function relationships detected.", C.GRAY)
-        out.add()
-        return
-    for source in sorted(relationships):
-        out.add(f"  {source}", C.BLUE)
-        for target in sorted(relationships[source]):
-            out.add(f"    └─ calls → {target}()", C.CYAN)
-    out.add()
-
-
-def report_events(out, events):
-    out.section("⚡ FIVEM EVENTS / CALLBACKS", C.CYAN)
-    if not events:
-        out.add("No FiveM events or callbacks detected.", C.GRAY)
-        out.add()
-        return
-
-    by_name = defaultdict(list)
-    for e in events:
-        by_name[e.name].append(e)
-
-    for name in sorted(by_name):
-        out.add(f"  {name}", C.YELLOW)
-        items = sorted(by_name[name], key=lambda e: (not e.is_register, str(e.file), e.line))
-        for idx, e in enumerate(items):
-            branch = "└─" if idx == len(items) - 1 else "├─"
-            role = "handler" if e.is_register else "trigger"
-            out.add(f"    {branch} {role:<7} {e.call:<26} {e.file}:{e.line}")
-    out.add()
-
-
-def event_problems(events, handlers):
-    by_name = defaultdict(list)
-    for e in events:
-        by_name[e.name].append(e)
-
-    problems = []
-    for name, items in sorted(by_name.items()):
-        if name == "<dynamic>":
-            for e in items:
-                problems.append(("Dynamic event name (can't be resolved statically)", f"{e.call} @ {e.file}:{e.line}"))
+def callers_of(f: Func, call_sites: list[Site]) -> list[Site]:
+    if not f.is_named:
+        return []
+    result = []
+    for s in call_sites:
+        if f.is_local and s.file != f.file:
             continue
-        regs = [e for e in items if e.is_register]
-        trigs = [e for e in items if not e.is_register]
-        if trigs and not regs:
-            problems.append(("Triggered but no handler in this resource", name))
-        if regs and not trigs and ":" in name:
-            problems.append(("Handler never triggered from Lua (NUI / other resource / dead?)", name))
-
-    per_side = defaultdict(list)
-    for f in handlers:
-        per_side[(f.handler_of, f.side)].append(f)
-    for (name, side), fs in sorted(per_side.items()):
-        if len(fs) > 1:
-            where = ", ".join(f"{f.file}:{f.start}" for f in fs)
-            problems.append((f"Event has {len(fs)} handlers on {side} side (runs more than once)", f"{name} → {where}"))
-    return problems
+        if s.file == f.file and f.start <= s.line <= f.end:
+            continue  # inside itself
+        if s.what == f.name or (":" in f.name and ":" in s.what and short(s.what) == short(f.name)):
+            result.append(s)
+    return result
 
 
-def report_problems(out, problems):
-    out.section("⚠ EVENT ISSUES", C.YELLOW)
-    if not problems:
-        out.add("No event issues detected.", C.GRAY)
-        out.add()
-        return
-    grouped = defaultdict(list)
-    for kind, detail in problems:
-        grouped[kind].append(detail)
-    for kind, details in grouped.items():
-        out.add(f"  {kind}", C.YELLOW)
-        for d in details:
-            out.add(f"    └─ {d}")
-    out.add()
+def links_of(f: Func, known: set[str], call_sites: list[Site], fire_sites: list[Site]):
+    called_by = callers_of(f, call_sites)
+    triggered_from = [s for s in fire_sites if f.handles_event and s.what == f.handles_event]
+    calls = sorted({c for c in f.calls if c in known or short(c) in known})
+    uses = sorted({c.split(".", 1)[1] for c in f.calls if c.startswith("exports.")})
+    fires = sorted({f"{s.call} → {s.what}" for s in f.fires})
+    return called_by, triggered_from, calls, uses, fires
 
 
-def report_attack_surface(out, surface):
-    out.section("🎯 CLIENT-REACHABLE SERVER HANDLERS (attack surface)", C.RED)
-    if not surface:
-        out.add("No server-side net events or callbacks detected.", C.GRAY)
-        out.add()
-        return
-    for f, sensitive in surface:
-        flag = "  ⚠ sensitive" if sensitive else ""
-        out.add(f"  {f.handler_of}  [{f.handler_via}]{flag}", C.RED if sensitive else C.WHITE)
-        out.add(f"    └─ {loc(f)}", C.GRAY)
-        for s in sensitive:
-            out.add(f"       • {s}", C.YELLOW)
-    out.add()
+def fmt_sites(sites: list[Site], limit=6) -> str:
+    text = ", ".join(f"{s.file}:{s.line}" for s in sites[:limit])
+    return text + (f"  (+{len(sites) - limit} more)" if len(sites) > limit else "")
 
 
-def report_exports(out, exports):
-    out.section("📦 EXPORTS", C.GREEN)
-    provided = [x for x in exports if x.kind == "provides"]
-    used = defaultdict(lambda: defaultdict(list))
-    for x in exports:
-        if x.kind == "uses":
-            used[x.resource][x.method].append(x)
+# ============================================================
+# REPORT
+# ============================================================
 
-    if not exports:
-        out.add("No exports detected.", C.GRAY)
-        out.add()
-        return
+def report(out, root, groups, known, call_sites, fire_sites):
+    for n, group in enumerate(groups, start=1):
+        rep = group[0]
+        files = len({f.file for f in group})
+        identical = len({f.hash for f in group}) == 1
+        label = "100% identical" if identical else "similar"
 
-    if provided:
-        out.add("  Provides:", C.GREEN)
-        for x in provided:
-            out.add(f"    └─ {x.method}   {x.file}:{x.line}")
-    if used:
-        out.add("  Uses (dependencies):", C.GREEN)
-        for res in sorted(used):
-            out.add(f"    {res}", C.CYAN)
-            for method, refs in sorted(used[res].items()):
-                locs = ", ".join(f"{r.file}:{r.line}" for r in refs[:4])
-                more = f" (+{len(refs) - 4})" if len(refs) > 4 else ""
-                out.add(f"      └─ {method} ×{len(refs)}   {locs}{more}", C.GRAY)
-    out.add()
+        out.add("═" * 64, C.MAGENTA)
+        out.add(f"[{n}] {len(group)} copies in {files} files  ·  {label}", C.MAGENTA)
+        out.add("═" * 64, C.MAGENTA)
+
+        for i, f in enumerate(group, start=1):
+            out.add(f"  ({i}) {f.name}", C.YELLOW)
+            out.add(f"      📁 Folder : {f.file.parent}")
+            out.add(f"      📄 File   : {f.file.name}   (lines {f.start} → {f.end})")
+            out.add(f"      📍 Path   : {f.file}:{f.start}", C.CYAN)
+            if i > 1:
+                score = ratio(rep, f)
+                text = "100% identical to (1)" if score == 1.0 else f"{score * 100:.1f}% similar to (1)"
+                out.add(f"      🧬 {text}", C.MAGENTA)
+
+            called_by, triggered_from, calls, uses, fires = links_of(f, known, call_sites, fire_sites)
+            linked = False
+            if f.handles:
+                out.add(f"      🎯 Handles event : {f.handles}", C.GREEN)
+                linked = True
+            if triggered_from:
+                out.add(f"      ⚡ Fired from    : {fmt_sites(triggered_from)}", C.GREEN)
+                linked = True
+            if called_by:
+                out.add(f"      🔗 Called from   : {fmt_sites(called_by)}", C.GREEN)
+                linked = True
+            if calls:
+                out.add(f"      ➡  Calls         : {', '.join(c + '()' for c in calls)}", C.BLUE)
+                linked = True
+            if fires:
+                out.add(f"      ⚡ Fires events  : {', '.join(fires)}", C.BLUE)
+                linked = True
+            if uses:
+                out.add(f"      📦 Uses exports  : {', '.join(uses)}", C.BLUE)
+                linked = True
+            if not linked:
+                out.add("      ○ Not linked to anything (possibly unused)", C.GRAY)
+            out.add()
 
 
 # ============================================================
@@ -663,11 +543,11 @@ def report_exports(out, exports):
 def main():
     global USE_COLOR
 
-    ap = argparse.ArgumentParser(description="Static analyzer for FiveM Lua resources")
-    ap.add_argument("path", nargs="?", default=".", help="resource folder (default: cwd)")
-    ap.add_argument("-o", "--output", help="report path (default: <resource>/dependency_report.txt)")
+    ap = argparse.ArgumentParser(description="Find similar functions across FiveM Lua files")
+    ap.add_argument("path", nargs="?", default=".", help="folder to scan (default: current folder)")
+    ap.add_argument("-o", "--output", help="report path")
     ap.add_argument("--threshold", type=float, default=0.70, help="similarity threshold (0-1)")
-    ap.add_argument("--min-tokens", type=int, default=25, help="ignore tiny functions in duplicate checks")
+    ap.add_argument("--min-tokens", type=int, default=20, help="ignore tiny functions")
     ap.add_argument("--no-color", action="store_true")
     args = ap.parse_args()
 
@@ -681,15 +561,15 @@ def main():
 
     root = Path(args.path).resolve()
     if not root.is_dir():
-        print(paint(f"[ERROR] Not a directory: {root}", C.RED))
+        print(paint(f"[ERROR] Not a folder: {root}", C.RED))
         sys.exit(1)
 
     print(paint(f"[ SCANNING ] {root}", C.CYAN))
     files = find_lua_files(root)
 
     funcs: list[Func] = []
-    events: list[Event] = []
-    exports: list[ExportRef] = []
+    call_sites: list[Site] = []
+    fire_sites: list[Site] = []
 
     for file in files:
         try:
@@ -697,69 +577,32 @@ def main():
         except OSError as error:
             print(paint(f"[ERROR] {file}: {error}", C.RED))
             continue
-        rel = file.relative_to(root)
-        side = detect_side(rel)
-        toks = tokenize(src)
-        funcs += extract_functions(toks, src.splitlines(), rel, side)
-        events += extract_events(toks, rel, side)
-        exports += extract_exports(toks, rel)
+        rel = Path(root.name) / file.relative_to(root)  # e.g. medical-dna/client/main.lua
+        f, c, e = extract(tokenize(src), rel)
+        funcs += f
+        call_sites += c
+        fire_sites += e
 
-    exact = find_exact_duplicates(funcs, args.min_tokens)
-    same_names = find_same_names(funcs)
-    similar = find_similar(funcs, args.threshold, args.min_tokens)
-
-    resolve = build_resolver(funcs)
-    relationships = defaultdict(set)
-    for f in funcs:
-        for call in f.calls:
-            for target in resolve(call, f):
-                relationships[f.name].add(target.name)
-
-    handlers = [f for f in funcs if f.handler_of]
-    net_names = {e.name for e in events if e.call in NET_REGISTER and e.side in ("server", "?")}
-    surface = []
-    for f in handlers:
-        if f.side not in ("server", "?"):
-            continue
-        if f.handler_of not in net_names and f.handler_via not in CALLBACK_REGISTER:
-            continue
-        calls = list(f.calls)
-        for call in f.calls:  # follow one level into helper functions
-            for target in resolve(call, f):
-                calls += [f"{c}  (via {target.name})" for c in target.calls]
-        sensitive = sorted({c for c in calls if SENSITIVE_CALL.search(c)})
-        surface.append((f, sensitive))
-    surface.sort(key=lambda s: (not s[1], s[0].handler_of))
-
-    problems = event_problems(events, handlers)
+    known = {f.name for f in funcs if f.is_named} | {short(f.name) for f in funcs if f.is_named}
+    groups = find_groups(funcs, args.threshold, args.min_tokens)
 
     out = Out()
-    out.add(f"Resource:  {root}", C.WHITE)
-    out.add(f"Lua files: {len(files)}", C.WHITE)
-    out.add(f"Functions: {len(funcs)}  (named: {sum(f.is_named for f in funcs)}, "
-            f"handlers: {len(handlers)})", C.WHITE)
+    folders = len({f.parent for f in files})
+    out.add(f"Folders scanned : {folders}", C.WHITE)
+    out.add(f"Lua files       : {len(files)}", C.WHITE)
+    out.add(f"Functions       : {len(funcs)}", C.WHITE)
     out.add()
 
-    report_duplicates(out, exact, same_names, similar)
-    report_relationships(out, relationships)
-    report_events(out, events)
-    report_problems(out, problems)
-    report_attack_surface(out, surface)
-    report_exports(out, exports)
-
-    issues = len(exact) + len(same_names) + len(similar)
-    out.add("─" * 60, C.GRAY)
-    out.add(f"Duplicate issues:        {issues}", C.YELLOW if issues else C.GREEN)
-    out.add(f"Event issues:            {len(problems)}", C.YELLOW if problems else C.GREEN)
-    out.add(f"Attack-surface handlers: {len(surface)} "
-            f"({sum(bool(s) for _, s in surface)} sensitive)", C.RED)
-    out.add(f"Function relationships:  {sum(len(v) for v in relationships.values())}", C.BLUE)
-    out.add(f"Events/callbacks:        {len(events)}", C.CYAN)
-    out.add(f"Export references:       {len(exports)}", C.GREEN)
+    if groups:
+        report(out, root, groups, known, call_sites, fire_sites)
+        copies = sum(len(g) for g in groups)
+        out.add(f"Similar groups: {len(groups)}  ({copies} functions involved)", C.YELLOW)
+    else:
+        out.add("✓ No similar functions across files.", C.GREEN)
 
     out.flush()
 
-    report_path = Path(args.output).resolve() if args.output else root / "dependency_report.txt"
+    report_path = Path(args.output).resolve() if args.output else root / "similar_functions_report.txt"
     out.write(report_path)
     print()
     print(paint(f"[ REPORT ] {report_path}", C.CYAN))
