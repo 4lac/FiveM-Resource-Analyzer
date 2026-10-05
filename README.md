@@ -2,9 +2,9 @@
 
 # REYOF : FiveM Resource Analyzer
 
-### Static analysis tool for FiveM Lua resources
+### A static analysis tool that scans FiveM Lua resources and finds **functions that are duplicated or similar across different files**, showing exactly where each copy lives and what it is connected to.
 
-Detect duplicate functions, analyze function relationships, inspect FiveM events and callbacks, and map resource dependencies — directly from your terminal.
+Point it at a single resource or your whole `resources` folder: it walks every sub-folder, compares every function, and groups the copies together.
 
 <br>
 
@@ -14,13 +14,6 @@ Detect duplicate functions, analyze function relationships, inspect FiveM events
 ![Dependencies](https://img.shields.io/badge/Dependencies-None-00FF88?style=for-the-badge)
 
 </div>
-
----
-# REYOF // FiveM Resource Analyzer
-
-A static analysis tool that scans FiveM Lua resources and finds **functions that are duplicated or similar across different files**, showing exactly where each copy lives and what it is connected to.
-
-Point it at a single resource or your whole `resources` folder: it walks every sub-folder, compares every function, and groups the copies together.
 
 ---
 
