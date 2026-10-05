@@ -1,21 +1,19 @@
-# REYOF // FiveM Resource Analyzer
+<div align="center">
 
-> Static analysis tool for FiveM Lua resources — detect duplicate code, similar functions, function relationships, events, callbacks, and exports.
+# REYOF : FiveM Resource Analyzer
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square\&logo=python\&logoColor=white)
-![FiveM](https://img.shields.io/badge/FiveM-Resource%20Analyzer-F40552?style=flat-square)
-![Lua](https://img.shields.io/badge/Lua-Static%20Analysis-2C2D72?style=flat-square\&logo=lua\&logoColor=white)
-![Status](https://img.shields.io/badge/Status-Active-00FF88?style=flat-square)
+### Static analysis tool for FiveM Lua resources
 
----
+Detect duplicate functions, analyze function relationships, inspect FiveM events and callbacks, and map resource dependencies — directly from your terminal.
 
-## Overview
+<br>
 
-**FiveM Resource Analyzer** is a lightweight static analysis tool built for FiveM developers.
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![FiveM](https://img.shields.io/badge/FiveM-Resource%20Analyzer-F40552?style=for-the-badge)
+![Lua](https://img.shields.io/badge/Lua-Supported-000080?style=for-the-badge&logo=lua&logoColor=white)
+![Dependencies](https://img.shields.io/badge/Dependencies-None-00FF88?style=for-the-badge)
 
-It scans Lua resources recursively and helps identify duplicated code, similar functions, function relationships, FiveM events, callbacks, and exports.
-
-The goal is to make large FiveM resources easier to understand, maintain, debug, and refactor.
+</div>
 
 ---
 
