@@ -16,112 +16,45 @@ Detect duplicate functions, analyze function relationships, inspect FiveM events
 </div>
 
 ---
+# REYOF // FiveM Resource Analyzer
+
+A static analysis tool that scans FiveM Lua resources and finds **functions that are duplicated or similar across different files**, showing exactly where each copy lives and what it is connected to.
+
+Point it at a single resource or your whole `resources` folder: it walks every sub-folder, compares every function, and groups the copies together.
+
+---
 
 ## Features
 
-### Duplicate Detection
-
-Detects functions that contain identical code across different files.
-
-* Exact duplicate functions
-* Same function name with different implementations
-* Similar function bodies
-* Line numbers and source files
-* Duplicate code preview
-
-### Function Relationships
-
-Analyzes relationships between functions and attempts to identify which functions call other functions.
-
-Example:
-
-```text
-playerLoad()
-    └── getPlayerData()
-            └── getInventory()
-```
-
-This helps visualize how different parts of a resource are connected.
-
-### FiveM Events & Callbacks
-
-Detects common FiveM communication patterns including:
-
-* `RegisterNetEvent`
-* `TriggerEvent`
-* `TriggerServerEvent`
-* `TriggerClientEvent`
-* `lib.callback.register`
-* `lib.callback.await`
-* `QBCore.Functions.CreateCallback`
-
-### Export Detection
-
-Finds exported functions such as:
-
-```lua
-exports('FunctionName', function()
-    ...
-end)
-```
-
-and:
-
-```lua
-exports.resource:FunctionName()
-```
-
-### Recursive Scanning
-
-The analyzer scans Lua files inside the entire resource, including nested folders.
-
-Example:
-
-```text
-resource/
-├── client/
-│   ├── main.lua
-│   └── beds.lua
-├── server/
-│   └── main.lua
-├── shared/
-│   └── utils.lua
-└── config/
-    └── config.lua
-```
-
-Ignored directories include:
-
-```text
-.git
-.idea
-.vscode
-node_modules
-cache
-dist
-build
-```
+- **Recursive scan**: goes through the target folder and every folder inside it.
+- **Cross-file detection**: reports only functions repeated in more than one file.
+- **Exact and similar matches**: catches 100% identical copies as well as near-copies with renamed variables or small edits.
+- **Grouped results**: a function copied into 4 files shows up once, with all 4 locations listed.
+- **Precise locations**: folder, file, line range and a `path:line` you can click in VS Code.
+- **Connection map** for every similar function:
+  - 🎯 the event it handles (`RegisterNetEvent`, `lib.callback.register`, `RegisterCommand`...)
+  - ⚡ where that event is fired from
+  - 🔗 where the function is called from
+  - ➡ project functions it calls
+  - ⚡ events it fires (`TriggerServerEvent`, `TriggerClientEvent`...)
+  - 📦 exports it uses (`ox_lib:notify`, `ox_inventory:AddItem`...)
+  - ○ flags functions that aren't linked to anything (possibly dead code)
+- **Real Lua tokenizer**: correctly handles strings, `[[long strings]]`, and every comment form (`--`, `--[[ ]]`, `--[==[ ]==]`), so commented-out code is never counted.
+- **Plain-text report** saved after every run.
 
 ---
 
 ## Requirements
 
-* Python 3.10+
-* No external Python packages required
+- Python **3.10+**
+- No external packages (standard library only)
 
 ---
 
 ## Installation
 
-Clone the repository:
-
 ```bash
-git clone https://github.com/YOUR_USERNAME/fivem-resource-analyzer.git
-```
-
-Enter the project:
-
-```bash
+git clone https://github.com/4lac/fivem-resource-analyzer.git
 cd fivem-resource-analyzer
 ```
 
@@ -129,255 +62,120 @@ cd fivem-resource-analyzer
 
 ## Usage
 
-Run the analyzer and provide the path to your FiveM resource:
+### Linux / macOS
 
 ```bash
-python FiveMduptool.py "C:\path\to\your\resource"
+python3 fivem_analyzer.py "/path/to/resources"
 ```
+
+### WSL
+
+Windows drives are mounted under `/mnt/c`:
+
+```bash
+python3 fivem_analyzer.py "/mnt/c/Users/PC/Desktop/server/resources"
+```
+
+### Windows (PowerShell / CMD)
+
+```powershell
+python fivem_analyzer.py "C:\Users\PC\Desktop\server\resources"
+```
+
+Use `py` instead of `python` if Python isn't on your PATH.
+
+### Scan the current folder
+
+```bash
+cd path/to/resource
+python3 /path/to/fivem_analyzer.py
+```
+
+### Optional: install as a global command (Linux / WSL)
+
+```bash
+mkdir -p ~/bin
+cp fivem_analyzer.py ~/bin/fivem-analyzer
+chmod +x ~/bin/fivem-analyzer
+echo 'export PATH="$HOME/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
+
+fivem-analyzer .
+```
+
+---
+
+## Options
+
+| Option | Default | Description |
+|---|---|---|
+| `path` | current folder | Folder to scan (recursively) |
+| `-o`, `--output` | `<folder>/similar_functions_report.txt` | Where to save the report |
+| `--threshold` | `0.70` | Minimum similarity (0–1) to count as similar |
+| `--min-tokens` | `20` | Ignore tiny functions to reduce noise |
+| `--no-color` | off | Disable colored output |
 
 Example:
 
 ```bash
-python FiveMduptool.py "C:\Users\PC\Desktop\medical-dna"
+python3 fivem_analyzer.py . --threshold 0.8 -o report.txt
 ```
-
-You can also run it against a parent directory containing multiple resources.
 
 ---
 
 ## Example Output
 
 ```text
-██████╗ ███████╗██╗   ██╗ ██████╗ ███████╗
-██╔══██╗██╔════╝╚██╗ ██╔╝██╔═══██╗██╔════╝
-██████╔╝█████╗   ╚████╔╝ ██║   ██║█████╗
-██╔══██╗██╔══╝    ╚██╔╝  ██║   ██║██╔══╝
-██║  ██║███████╗   ██║   ╚██████╔╝███████╗
-╚═╝  ╚═╝╚══════╝   ╚═╝    ╚═════╝ ╚══════╝
+════════════════════════════════════════════════════════════════
+[1] 3 copies in 3 files  ·  similar
+════════════════════════════════════════════════════════════════
+  (1) getInventory
+      📁 Folder : medical-dna/client
+      📄 File   : main.lua   (lines 1 → 8)
+      📍 Path   : medical-dna/client/main.lua:1
+      🔗 Called from   : medical-dna/client/main.lua:11
+      ⚡ Fires events  : TriggerServerEvent → medical-dna:server:sync
 
-          FIVEM RESOURCE ANALYZER
+  (2) getInventory
+      📁 Folder : other-res/client/utils
+      📄 File   : helpers.lua   (lines 1 → 8)
+      📍 Path   : other-res/client/utils/helpers.lua:1
+      🧬 100% identical to (1)
+      ⚡ Fires events  : TriggerServerEvent → medical-dna:server:sync
 
-[ SCANNING ] C:\Users\PC\Desktop\medical-dna
+  (3) getInv
+      📁 Folder : medical-dna/client
+      📄 File   : beds.lua   (lines 1 → 8)
+      📍 Path   : medical-dna/client/beds.lua:1
+      🧬 90.4% similar to (1)
+      ⚡ Fires events  : TriggerServerEvent → medical-dna:server:sync
 
-Lua files found: 6
-Functions found: 6
-
-🔴 EXACT DUPLICATES: 1
-
-  toast()
-  Same body: 100%
-
-  ├─ client\beds.lua:15-17
-  ├─ client\main.lua:10-12
+Similar groups: 1  (3 functions involved)
 ```
 
 ---
 
-## Analysis Sections
+## How It Works
 
-The analyzer currently provides several analysis sections.
-
-### 🔴 Exact Duplicates
-
-Finds functions with identical normalized function bodies.
-
-### 🟠 Same Name / Different Code
-
-Finds functions using the same name while having different implementations.
-
-### 🟡 Similar Functions
-
-Uses code similarity analysis to identify functions that may be doing similar work even when their code is not completely identical.
-
-### 🔗 Function Relationships
-
-Attempts to identify internal function calls and build relationships between functions.
-
-### ⚡ FiveM Events / Callbacks
-
-Detects FiveM networking events and callback registrations/usages.
-
-### 📦 Exports
-
-Detects exported functions and resource-to-resource interactions.
-
----
-
-## Generated Reports
-
-The analyzer can generate a report containing the detected relationships and potential issues.
-
-Example:
-
-```text
-duplicate_report.txt
-```
-
-The report can be used for reviewing large resources without having to inspect every Lua file manually.
-
----
-
-## Why?
-
-FiveM resources can become difficult to maintain as they grow.
-
-Large resources often contain:
-
-* duplicated functions
-* repeated utility code
-* unused functions
-* multiple implementations of the same logic
-* complicated event chains
-* unnecessary dependencies
-* duplicated callbacks
-* resource-to-resource dependencies
-
-This project was created to make those problems easier to spot.
-
----
-
-## Use Cases
-
-This tool can be useful when:
-
-* Cleaning up an old FiveM resource
-* Refactoring a large resource
-* Auditing a purchased resource
-* Looking for duplicated code
-* Understanding an unfamiliar resource
-* Investigating how events are connected
-* Finding potentially unnecessary functions
-* Preparing a resource for optimization
-* Reviewing code before publishing it
-
----
-
-## Example
-
-Given:
-
-```lua
-local function toast(msg)
-    SendNUIMessage({
-        action = 'toast',
-        text = msg
-    })
-end
-```
-
-and another file containing:
-
-```lua
-local function toast(msg)
-    SendNUIMessage({
-        action = 'toast',
-        text = msg
-    })
-end
-```
-
-The analyzer can identify that both functions contain the same implementation:
-
-```text
-🔴 EXACT DUPLICATES
-
-toast()
-
-├─ client\main.lua
-└─ client\beds.lua
-```
-
-This can indicate an opportunity to move shared functionality into a common utility file.
+1. **Scan**: collects every `.lua` file under the target folder. It skips `.git`, `node_modules`, `cache`, `dist`, `build`, `.idea` and `.vscode`.
+2. **Tokenize**: each file is split into Lua tokens, so comments and whitespace don't affect comparisons.
+3. **Extract functions**: picks up named functions (`function a.b:c()`, `local function x()`, `x = function()`) and anonymous handlers. Handlers are named after their context, for example `RegisterNetEvent('medical-dna:server:treat')`.
+4. **Compare**: function bodies are compared token by token. A function's name is ignored, so the same body under a different name is still caught.
+5. **Group**: matching functions from different files are merged into one group.
+6. **Link**: each function in a group is mapped to its events, callers, calls and exports.
 
 ---
 
 ## Limitations
 
-This project performs **static analysis**.
-
-It does not execute the FiveM resource.
-
-Because Lua and FiveM resources can use dynamic behavior, the analyzer may produce false positives or miss relationships in some situations.
-
-For example:
-
-* dynamically generated function names
-* dynamically generated events
-* metatables
-* complex Lua patterns
-* functions created at runtime
-* obfuscated code
-* indirect function calls
-
-The results should therefore be treated as analysis hints rather than absolute proof.
-
----
-
-## Roadmap
-
-Possible future improvements:
-
-* [ ] Better Lua AST parsing
-* [ ] Advanced call graph generation
-* [ ] Interactive dependency graph
-* [ ] HTML reports
-* [ ] JSON export
-* [ ] Resource dependency detection
-* [ ] Unused function detection
-* [ ] Unused event detection
-* [ ] Event flow visualization
-* [ ] Better QBCore analysis
-* [ ] Better ox_lib analysis
-* [ ] Config dependency analysis
-* [ ] Cross-resource analysis
-* [ ] Web-based interface
-
----
-
-## Project Structure
-
-```text
-FiveM-Resource-Analyzer/
-│
-├── FiveMduptool.py
-├── README.md
-├── LICENSE
-└── .gitignore
-```
-
----
-
-## Contributing
-
-Contributions, improvements, and bug reports are welcome.
-
-If you find an issue or have an idea for improving the analyzer, feel free to open an issue or submit a pull request.
-
----
-
-## License
-
-This project is licensed under the MIT License.
-
-See `LICENSE` for more information.
+- Static analysis only: calls built dynamically at runtime (e.g. `_G[name]()`) can't be resolved.
+- Only `.lua` files are scanned (NUI JavaScript is not).
+- Similarity is structural, so two functions that do the same thing written in completely different ways won't match.
 
 ---
 
 ## Author
 
-**REYOF**
-
-FiveM Developer • Cybersecurity • Offensive Security • Low-Level Systems
-
-Built for analyzing, understanding, and improving FiveM resources.
-
----
-
-## Disclaimer
-
-This tool is intended for legitimate development, debugging, auditing, and code-maintenance purposes.
-
-Only analyze resources and code that you have permission to inspect.
+**Reyof** · [github.com/4lac](https://github.com/4lac)
 
 ---
 
