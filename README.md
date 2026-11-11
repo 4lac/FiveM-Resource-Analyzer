@@ -2,6 +2,8 @@
 
 # REYOF : FiveM Resource Analyzer
 
+<img src="logo.png" alt="FiveM Resource Analyzer logo" width="320"/>
+
 ### A static analysis tool that scans FiveM Lua resources and finds **functions that are duplicated or similar across different files**, showing exactly where each copy lives and what it is connected to.
 
 Point it at a single resource or your whole `resources` folder: it walks every sub-folder, compares every function, and groups the copies together.
@@ -118,9 +120,12 @@ python3 fivem_analyzer.py . --threshold 0.8 -o report.txt
 ## Example Output
 
 ```text
-════════════════════════════════════════════════════════════════
-[1] 3 copies in 3 files  ·  similar
-════════════════════════════════════════════════════════════════
+  ──────────────────────────────────────────────────────────────────
+  CASE FILES   1 open  ·  3 functions involved
+  ──────────────────────────────────────────────────────────────────
+
+  ▌ CASE #1  ·  3 copies in 3 files  ·  similar
+
   (1) getInventory
       📁 Folder : medical-dna/client
       📄 File   : main.lua   (lines 1 → 8)
@@ -142,8 +147,11 @@ python3 fivem_analyzer.py . --threshold 0.8 -o report.txt
       🧬 90.4% similar to (1)
       ⚡ Fires events  : TriggerServerEvent → medical-dna:server:sync
 
-Similar groups: 1  (3 functions involved)
+  ──────────────────────────────────────────────────────────────────
+  1 case(s) open. Merge the copies into one shared function or export.
 ```
+
+If nothing is duplicated, the report ends with **CASE CLOSED**.
 
 ---
 
