@@ -57,16 +57,14 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
 
-HEADER = r"""
-██████╗ ███████╗██╗   ██╗ ██████╗ ███████╗
-██╔══██╗██╔════╝╚██╗ ██╔╝██╔═══██╗██╔════╝
-██████╔╝█████╗   ╚████╔╝ ██║   ██║█████╗
-██╔══██╗██╔══╝    ╚██╔╝  ██║   ██║██╔══╝
-██║  ██║███████╗   ██║   ╚██████╔╝███████╗
-╚═╝  ╚═╝╚══════╝   ╚═╝    ╚═════╝ ╚══════╝
-
-             FIVEM RESOURCE ANALYZER
-"""
+BANNER = r"""
+  ███████╗██╗██╗   ██╗███████╗███╗   ███╗
+  ██╔════╝██║██║   ██║██╔════╝████╗ ████║
+  █████╗  ██║██║   ██║█████╗  ██╔████╔██║
+  ██╔══╝  ██║╚██╗ ██╔╝██╔══╝  ██║╚██╔╝██║
+  ██║     ██║ ╚████╔╝ ███████╗██║ ╚═╝ ██║
+  ╚═╝     ╚═╝  ╚═══╝  ╚══════╝╚═╝     ╚═╝"""
+WIDTH = 70
 
 IGNORE_DIRS = {".git", ".idea", ".vscode", "node_modules", "cache", "dist", "build"}
 
@@ -97,10 +95,11 @@ TRIGGER_CALLS = {
 
 class C:
     RESET = "\033[0m"
-    PINK = "\033[1;38;2;255;105;180m"
+    ORANGE = "\033[38;5;208m"
+    STAR = "\033[1;93m"
     RED, GREEN, YELLOW = "\033[91m", "\033[92m", "\033[93m"
     CYAN, MAGENTA, BLUE = "\033[96m", "\033[95m", "\033[94m"
-    GRAY, WHITE = "\033[90m", "\033[97m"
+    GRAY, WHITE = "\033[90m", "\033[1;97m"
 
 
 USE_COLOR = True
@@ -497,9 +496,8 @@ def report(out, root, groups, known, call_sites, fire_sites):
         identical = len({f.hash for f in group}) == 1
         label = "100% identical" if identical else "similar"
 
-        out.add("═" * 64, C.MAGENTA)
-        out.add(f"[{n}] {len(group)} copies in {files} files  ·  {label}", C.MAGENTA)
-        out.add("═" * 64, C.MAGENTA)
+        out.add(f"  ▌ CASE #{n}  ·  {len(group)} copies in {files} files  ·  {label}", C.WHITE)
+        out.add()
 
         for i, f in enumerate(group, start=1):
             out.add(f"  ({i}) {f.name}", C.YELLOW)
@@ -557,14 +555,15 @@ def main():
         os.system("")  # enables ANSI colors on Windows consoles
     USE_COLOR = not args.no_color and sys.stdout.isatty() and "NO_COLOR" not in os.environ
 
-    print(paint(HEADER, C.PINK))
+    print(paint(BANNER, C.ORANGE) + "  " + paint("A N A L Y Z E R", C.WHITE) + "  " + paint(f"· REYOF", C.GRAY))
+    print()
 
     root = Path(args.path).resolve()
     if not root.is_dir():
         print(paint(f"[ERROR] Not a folder: {root}", C.RED))
         sys.exit(1)
 
-    print(paint(f"[ SCANNING ] {root}", C.CYAN))
+    print(paint(f"  scanning   {root}", C.GRAY))
     files = find_lua_files(root)
 
     funcs: list[Func] = []
@@ -588,24 +587,31 @@ def main():
 
     out = Out()
     folders = len({f.parent for f in files})
-    out.add(f"Folders scanned : {folders}", C.WHITE)
-    out.add(f"Lua files       : {len(files)}", C.WHITE)
-    out.add(f"Functions       : {len(funcs)}", C.WHITE)
+    rule = "  " + "─" * (WIDTH - 4)
+    out.add(f"  folders    {folders}", C.GRAY)
+    out.add(f"  lua files  {len(files)}", C.GRAY)
+    out.add(f"  functions  {len(funcs)}", C.GRAY)
+    out.add()
+    copies = sum(len(g) for g in groups)
+    out.add(rule, C.GRAY)
+    if groups:
+        out.add(f"  CASE FILES   {len(groups)} open  ·  {copies} functions involved", C.STAR)
+    else:
+        out.add("  CASE CLOSED  No similar functions across files.", C.GREEN)
+    out.add(rule, C.GRAY)
     out.add()
 
     if groups:
         report(out, root, groups, known, call_sites, fire_sites)
-        copies = sum(len(g) for g in groups)
-        out.add(f"Similar groups: {len(groups)}  ({copies} functions involved)", C.YELLOW)
-    else:
-        out.add("✓ No similar functions across files.", C.GREEN)
+        out.add(rule, C.GRAY)
+        out.add(f"  {len(groups)} case(s) open. Merge the copies into one shared function or export.", C.STAR)
 
     out.flush()
 
     report_path = Path(args.output).resolve() if args.output else root / "similar_functions_report.txt"
     out.write(report_path)
     print()
-    print(paint(f"[ REPORT ] {report_path}", C.CYAN))
+    print(paint(f"  report saved  {report_path}", C.GRAY))
 
 
 if __name__ == "__main__":
