@@ -2,7 +2,7 @@
 
 # REYOF : FiveM Resource Analyzer
 
-<img src="logo.png" alt="FiveM Resource Analyzer logo" width="320"/>
+<img src="logo2.png" alt="FiveM Resource Analyzer logo" width="320"/>
 
 ### A static analysis tool that scans FiveM Lua resources and finds **functions that are duplicated or similar across different files**, showing exactly where each copy lives and what it is connected to.
 
